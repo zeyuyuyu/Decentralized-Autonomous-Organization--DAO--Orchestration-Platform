@@ -1,33 +1,60 @@
-import time
-import hashlib
-import json
+import web3
+from typing import List, Tuple
 
 class DAOGovernance:
-    def __init__(self, dao_members, initial_proposals):
-        self.dao_members = dao_members
-        self.proposals = initial_proposals
-        self.vote_counts = {p['id']: 0 for p in self.proposals}
-        self.executed_proposals = []
+    def __init__(self, dao_address: str, web3_provider: web3.Web3):
+        self.dao_address = dao_address
+        self.web3 = web3_provider
+        self.dao_contract = self.web3.eth.contract(address=dao_address, abi=self.get_abi())
 
-    def submit_proposal(self, proposal):
-        proposal_id = hashlib.sha256(json.dumps(proposal).encode()).hexdigest()
-        self.proposals.append({'id': proposal_id, 'details': proposal})
-        self.vote_counts[proposal_id] = 0
-        return proposal_id
+    def get_abi(self) -> List[dict]:
+        # Load the ABI from a file or retrieve it from the blockchain
+        with open('dao_abi.json', 'r') as f:
+            return json.load(f)
 
-    def cast_vote(self, member, proposal_id, vote):
-        if member not in self.dao_members:
-            raise ValueError('Member is not part of the DAO')
-        if proposal_id not in self.vote_counts:
-            raise ValueError('Proposal does not exist')
-        self.vote_counts[proposal_id] += 1 if vote else -1
+    def create_proposal(self, title: str, description: str, vote_duration: int) -> int:
+        """
+        Create a new proposal in the DAO.
+        
+        Args:
+            title (str): The title of the proposal.
+            description (str): The description of the proposal.
+            vote_duration (int): The duration of the voting period in blocks.
+        
+        Returns:
+            int: The ID of the newly created proposal.
+        """
+        tx = self.dao_contract.functions.createProposal(title, description, vote_duration).transact()
+        receipt = self.web3.eth.waitForTransactionReceipt(tx)
+        return receipt.logs[0].args.proposalId
 
-    def execute_proposals(self):
-        for proposal in self.proposals:
-            proposal_id = proposal['id']
-            if self.vote_counts[proposal_id] >= (len(self.dao_members) // 2) + 1:
-                self.executed_proposals.append(proposal)
-                self.proposals.remove(proposal)
-                del self.vote_counts[proposal_id]
-                print(f'Executed proposal: {proposal["details"]}')
-        time.sleep(60)  # Wait for 1 minute before checking again
+    def vote(self, proposal_id: int, vote: bool) -> None:
+        """
+        Vote on a proposal in the DAO.
+        
+        Args:
+            proposal_id (int): The ID of the proposal to vote on.
+            vote (bool): True for 'yes', False for 'no'.
+        """
+        tx = self.dao_contract.functions.vote(proposal_id, vote).transact()
+        self.web3.eth.waitForTransactionReceipt(tx)
+
+    def get_proposal_details(self, proposal_id: int) -> Tuple[str, str, int, int, int, bool]:
+        """
+        Get the details of a proposal in the DAO.
+        
+        Args:
+            proposal_id (int): The ID of the proposal to retrieve.
+        
+        Returns:
+            Tuple[str, str, int, int, int, bool]: The proposal's title, description, vote duration, start block, end block, and whether it has been executed.
+        """
+        proposal = self.dao_contract.functions.proposals(proposal_id).call()
+        return (
+            proposal[0],
+            proposal[1],
+            proposal[2],
+            proposal[3],
+            proposal[4],
+            proposal[5]
+        )
